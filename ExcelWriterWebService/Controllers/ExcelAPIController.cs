@@ -17,25 +17,30 @@ namespace ExcelWriterWebService.Controllers
         [HttpPost]
         public IHttpActionResult CreateFile([FromBody]PassExcelCreation objCreation)
         {
-            //try
-            //{
-            if (Framework.WriteFile(
-                        FileName: objCreation.FileName,
-                        FileType: objCreation.FileType,
-                        Destination: objCreation.Destination,
-                        Contents: objCreation.Contents ?? Framework.FetchJSON2(),
-                        UppercaseHeadings: objCreation.UppercaseHeadings,
-                        AutoSizeColumns: objCreation.AutoSizeColumns,
-                        HeadingStyleID: objCreation.HeadingStyleID,
-                        StandardStyleID: objCreation.StandardStyleID,
-                        IndentedHeadingStyleID: objCreation.IndentedHeadingStyleID,
-                        IndentedStyleID: objCreation.IndentedStyleID))
+            try
             {
-                return Ok(new { objCreation.FileName });
+                if (Framework.WriteFile(
+                            FileName: objCreation.FileName,
+                            FileType: objCreation.FileType,
+                            Destination: objCreation.Destination,
+                            Contents: objCreation.Contents ?? Framework.FetchJSON2(),
+                            UppercaseHeadings: objCreation.UppercaseHeadings,
+                            AutoSizeColumns: objCreation.AutoSizeColumns,
+                            HeadingStyleID: objCreation.HeadingStyleID,
+                            StandardStyleID: objCreation.StandardStyleID,
+                            IndentedHeadingStyleID: objCreation.IndentedHeadingStyleID,
+                            IndentedStyleID: objCreation.IndentedStyleID))
+                {
+                    return Ok(new { objCreation.FileName });
+                }
+                else
+                {
+                    throw new Exception($"FAILED writing {objCreation.FileName}");
+                }
             }
-            else
+            catch (Exception e)
             {
-                throw new Exception($"FAILED writing {objCreation.FileName}");
+                return Content(HttpStatusCode.InternalServerError, e);
             }
         }
 
