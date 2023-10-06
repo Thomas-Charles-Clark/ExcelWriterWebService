@@ -120,7 +120,11 @@ namespace FastExcel
             IndentedHeadingStyleID = indentedHeadingStyleId;
             IndentedStyleID = indentedStyleId;
 
-            if ((rows.FirstOrDefault() as IEnumerable<object>) == null)
+            if (rows.FirstOrDefault() as XElement != null)
+            {
+                PopulateRowsFromXElements(rows as IEnumerable<XElement>);
+            }
+            else if ((rows.FirstOrDefault() as IEnumerable<object>) == null)
             {
                 PopulateRowsFromObjects(rows);
             }
@@ -181,6 +185,33 @@ namespace FastExcel
             int indentationCounter = 0;
 
             Rows = WriteExpandoObjectList(rows as IEnumerable<ExpandoObject>, ref overallRowCounter, ref indentationCounter, null);
+
+            if (AutoWidthColumns)
+            {
+                if (Rows.Any())
+                {
+                    for (var i = 0; i < Rows.Select(p => p.Cells.Count()).Max(); i++)
+                    {
+                        Columns.Add(new Column()
+                        {
+                            Index = i + 1,
+                            LongestContentWidth = null
+                        });
+                    }
+                }
+
+                Columns.ForEach(c =>
+                {
+                    c.LongestContentWidth = Rows.SelectMany(p => p.Cells.Where(q => q.ColumnNumber == c.Index).Select(q => q.Length)).Max() + 3;
+                });
+            }
+        }
+
+        private void PopulateRowsFromXElements(IEnumerable<XElement> rows)
+        {
+            int overallRowCounter = 1;
+
+            Rows = WriteXElementList(rows, ref overallRowCounter);
 
             if (AutoWidthColumns)
             {
@@ -337,6 +368,62 @@ namespace FastExcel
 
                     overallRowCounter += 2;
                 }
+            }
+
+            return rows;
+        }
+
+        List<Row> WriteXElementList(IEnumerable<XElement> data, ref int overallRowCounter)
+        {
+            List<Row> rows = new List<Row>();
+
+            int thisTableRowCounter = 1;
+
+            foreach (var item in data)
+            {
+                if (thisTableRowCounter == 1)
+                {
+                    var cells = new List<Cell>();
+
+                    thisTableRowCounter++;
+
+                    var headerCellCounter = 1;
+
+                    cells.Add(new Cell(headerCellCounter++, null));
+
+                    var headerStyleIndex = HeadingStyleID;
+
+                    item.Elements().ToList().ForEach(k =>
+                    {
+                        var heading = k.Name.LocalName.Replace(",", " ").Replace("\r\n", " ").Replace("\n", " ");//?.SplitCamelCase();
+
+                        if (UppercaseHeadings)
+                            cells.Add(new Cell(headerCellCounter++, heading.ToUpperInvariant(), headerStyleIndex));
+                        else
+                            cells.Add(new Cell(headerCellCounter++, heading, headerStyleIndex));
+                    });
+
+                    var headerRow = new Row(overallRowCounter++, cells);
+
+                    rows.Add(headerRow);
+                }
+
+                var dataCells = new List<Cell>();
+
+                var dataCellCounter = 1;
+
+                var styleIndex = StandardStyleID;
+
+                item.Elements().ToList().ForEach(k =>
+                {
+                    var v = k.Value;
+
+                    dataCells.Add(new Cell(dataCellCounter++, v?.ToString().Replace(",", " ").Replace("\r\n", " ").Replace("\n", " ") ?? "", styleIndex));
+                });
+
+                var dataRow = new Row(overallRowCounter++, dataCells);
+
+                rows.Add(dataRow);
             }
 
             return rows;
