@@ -1,3 +1,8 @@
 ﻿Gratitude to https://github.com/ahmedwalid05/FastExcel
 
 from whom I adapted the contents of /FastExcel
+
+
+Gratitude also to Vincent Tan, author of SpreadsheetLight!
+How the hell have I been doing this gig for twelve years and I've only just found his work?!
+

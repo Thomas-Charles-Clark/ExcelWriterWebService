@@ -4,6 +4,7 @@ using Newtonsoft.Json.Converters;
 using SimpleImpersonation;
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Data.SqlClient;
 using System.Dynamic;
 using System.IO;
@@ -58,7 +59,7 @@ namespace ExcelWriterWebService.Utilities
 
         public static string FetchJSON2()
         {
-            using (var conn = new SqlConnection("Data Source=vm-sql1;Initial Catalog=Flock;User=dg;Password=mattm00"))
+            using (var conn = new SqlConnection(ConfigurationManager.ConnectionStrings["FlockConnectionString"].ConnectionString))
             {
                 try
                 {
@@ -69,6 +70,83 @@ TA.*
 FROM dbo.TradeAccount AS TA
 ORDER BY TA.TradeAccountID DESC
 	FOR JSON PATH, INCLUDE_NULL_VALUES)").Single();
+                }
+                finally
+                {
+                    conn.Close();
+                }
+            }
+        }
+
+
+        public static string FetchWvAJSON()
+        {
+            using (var conn = new SqlConnection(ConfigurationManager.ConnectionStrings["FlockConnectionString"].ConnectionString))
+            {
+                try
+                {
+                    // Cushions, Fabric, Wallpaper, Pattern Books.
+                    return conn.Query<string>($@"DECLARE @Date DATETIME2 = '2024/08/09'
+
+-- Defaults
+	SELECT @Date = ISNULL(@Date,SYSDATETIME())	   
+	-- Local variables
+	DECLARE @CC NVARCHAR(500) = 'cs29@designersguild.com',
+			@OrderReceivedJSON NVARCHAR(MAX),			
+			@Subject NVARCHAR(255) = 'Designers Guild - Orders Received',
+			@Now DATETIME2(2) = SYSDATETIME(),
+			@FromDT DATETIME2(2) = DATEADD(HOUR,-12,CONVERT(DATETIME2(2),@Date)),
+			@ToDT DATETIME2(2) = DATEADD(HOUR,12,CONVERT(DATETIME2(2),@Date)),
+			@EmailID BIGINT;
+	DECLARE	@Destination NVARCHAR(255) = '\\vm-sql2\d$\EmailAttachments\',
+			@FileName NVARCHAR(255) = 'WvA_OrdersReceived_@_' + FORMAT(@Now,'dd-MM-yyyy_HH-mm-ss'),
+			@Body NVARCHAR(MAX) = '<p>Please find attached a report of all orders, destined for the Netherlands, received and processed between ' + FORMAT(DATEADD(SECOND,1,@FromDT),'dd/MM/yyyy HH:mm:ss') + ' and ' + FORMAT(@ToDT,'dd/MM/yyyy HH:mm:ss') + ' </p>' + CHAR(10) +
+								  '<p>Please note: Any orders held awaiting customer input will not appear on this report until the query has been answered and the order released for processing.</p>';
+	DECLARE @FileAttachments NVARCHAR(MAX) = @Destination + @FileName + '.xlsx'
+	   
+	-- Select report data
+	SELECT @OrderReceivedJSON = (
+	SELECT	OH.OrderDT AS OrderDate,
+			OH.OrderID AS OrderNumber,
+			OH.CustomerOrderReference ,
+			OH.DeliveryName,
+			OH.DeliveryAddressLine1,
+			OH.DeliveryAddressLine2,
+			OH.DeliveryTown,
+			OH.DeliveryCounty,
+			OH.DeliveryPostcode,
+			OH.DeliveryCountryCode,
+			TA.Code AS TradeAccountCode,
+			TA.Name AS TradeAccountName,
+			OL.CustomerLineReference,
+			OL.ProductCode,
+			P.[Name] AS ProductName,
+			OL.QuantityOrdered,
+			OL.UnitValueCurrency,
+			OL.LineValueCurrency,	
+			Ol.DiscountPercentage,
+			OL.DetailedLineStatus,
+			DH.DespatchedDT AS DespatchedDate, 
+			IIF(TA.CreditStop = 1,'Credit Stop','') AS CreditStop,
+			PT.Name AS PaymentTerms,
+			IIF(OH.HoldOrder = 1, 'Order held by customer services','') AS HeldReason
+	FROM	Mertex.OrderHead AS OH
+			INNER JOIN Mertex.OrderLine AS OL ON OL.OrderID = OH.OrderID		
+			INNER JOIN Mertex.Product AS P ON P.Code = OL.ProductCode COLLATE Latin1_General_CI_AS
+			INNER JOIN dbo.TradeAccount AS TA ON TA.Code = OH.TradeAccountCode
+			INNER JOIN dbo.PaymentTerms AS PT ON PT.PaymentTermsID = TA.PaymentTermsID
+			LEFT OUTER JOIN Mertex.DespatchLine AS DL ON DL.DespatchLineID = OL.DespatchLineID
+			LEFT OUTER JOIN Mertex.DespatchHead AS DH ON DH.DespatchHeadID = DL.DespatchHeadID
+	WHERE	-- Tom 08/12/2021 
+			-- OH.DeliveryCountryCode = 'NL' AND
+			-- Apparently this is the more correct criteria to check:
+			TA.CountryCode = 'NL' AND
+			OH.OrderDT > @FromDT AND 
+			OH.OrderDT <= @ToDT
+	ORDER BY OH.CustomerOrderReference DESC
+	FOR JSON PATH, INCLUDE_NULL_VALUES);
+
+SELECT @OrderReceivedJSON").Single();
                 }
                 finally
                 {
@@ -139,7 +217,7 @@ ORDER BY TA.TradeAccountID DESC
 
                             using (var fs = new System.IO.FileStream(fullPath, System.IO.FileMode.OpenOrCreate))
                             {
-                                using (var ts = new System.IO.MemoryStream(Framework.StringToByteArray(Framework.TemplateHex)))
+                                using (var ts = new System.IO.MemoryStream(Framework.StringToByteArray(Framework.NewNewTemplateHex)))
                                 {
                                     using (var fastExcel = new FastExcel.FastExcel(ts, fs))
                                     {
@@ -225,7 +303,7 @@ ORDER BY TA.TradeAccountID DESC
                         {
                             using (var ms = new MemoryStream())
                             {
-                                using (var ts = new MemoryStream(Framework.StringToByteArray(Framework.TemplateHex)))
+                                using (var ts = new MemoryStream(Framework.StringToByteArray(Framework.NewNewTemplateHex)))
                                 {
                                     using (var fastExcel = new FastExcel.FastExcel(ts, ms))
                                     {

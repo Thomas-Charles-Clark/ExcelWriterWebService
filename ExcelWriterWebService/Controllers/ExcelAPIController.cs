@@ -23,7 +23,7 @@ namespace ExcelWriterWebService.Controllers
                             FileName: objCreation.FileName,
                             FileType: objCreation.FileType,
                             Destination: objCreation.Destination,
-                            Contents: objCreation.Contents ?? Framework.FetchJSON2(),
+                            Contents: objCreation.Contents ?? Framework.FetchWvAJSON(),
                             UppercaseHeadings: objCreation.UppercaseHeadings,
                             AutoSizeColumns: objCreation.AutoSizeColumns,
                             HeadingStyleID: objCreation.HeadingStyleID,

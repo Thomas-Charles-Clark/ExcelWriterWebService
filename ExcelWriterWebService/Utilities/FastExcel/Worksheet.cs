@@ -10,6 +10,7 @@ using System.Data;
 using System.Dynamic;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
+using System.Web.UI.WebControls;
 
 namespace FastExcel
 {
@@ -59,6 +60,8 @@ namespace FastExcel
         internal bool UppercaseHeadings { get; set; }
         internal bool AutoWidthColumns { get; set; }
 
+        internal List<string> ColumnHeadings { get; set; }
+
         public List<Column> Columns { get; set; }
 
         /// <summary>
@@ -91,6 +94,7 @@ namespace FastExcel
         public Worksheet() 
         {
             Columns = new List<Column>();
+            ColumnHeadings = new List<string>();
         }
 
         /// <summary>
@@ -99,6 +103,7 @@ namespace FastExcel
         public Worksheet(FastExcel fastExcel)
         {
             FastExcel = fastExcel;
+            ColumnHeadings = new List<string>();
         }
 
         /// <summary>
@@ -299,6 +304,8 @@ namespace FastExcel
                                 cells.Add(new Cell(headerCellCounter++, heading.ToUpperInvariant(), headerStyleIndex));
                             else
                                 cells.Add(new Cell(headerCellCounter++, heading, headerStyleIndex));
+
+                            ColumnHeadings.Add(heading);
                         }
                     });
 
@@ -316,13 +323,15 @@ namespace FastExcel
 
                 for (var i = 0; i < indentationCounter; i++)
                 {
+                    var h = ColumnHeadings.Count > i ? ColumnHeadings[i] : null;
+
                     if (i == indentationCounter - 1 && !String.IsNullOrEmpty(subTableLabel))
                     {
-                        dataCells.Add(new Cell(dataCellCounter++, UppercaseHeadings ? subTableLabel.ToUpperInvariant() : subTableLabel, IndentedHeadingStyleID)); // bold it
+                        dataCells.Add(new Cell(dataCellCounter++, UppercaseHeadings ? subTableLabel.ToUpperInvariant() : subTableLabel, IndentedHeadingStyleID, h)); // bold it
                     }
                     else
                     {
-                        dataCells.Add(new Cell(dataCellCounter++, null));
+                        dataCells.Add(new Cell(dataCellCounter++, null, null, h));
                     }
                 }
 
@@ -337,8 +346,10 @@ namespace FastExcel
                         AdditionalDataSets.Add(new Tuple<string, List<object>>(k, list));
                     }
                     else
-                    {
-                        dataCells.Add(new Cell(dataCellCounter++, v?.ToString().Replace(",", " ").Replace("\r\n", " ").Replace("\n", " ") ?? "", styleIndex));
+                    { 
+                        var h = ColumnHeadings.Count > (dataCellCounter - 1) ? ColumnHeadings[dataCellCounter - 1] : null;
+
+                        dataCells.Add(new Cell(dataCellCounter++, v?.ToString().Replace(",", " ").Replace("\r\n", " ").Replace("\n", " ") ?? "", styleIndex, h));
                     }
                 });
 
@@ -401,6 +412,8 @@ namespace FastExcel
                             cells.Add(new Cell(headerCellCounter++, heading.ToUpperInvariant(), headerStyleIndex));
                         else
                             cells.Add(new Cell(headerCellCounter++, heading, headerStyleIndex));
+
+                        ColumnHeadings.Add(heading);
                     });
 
                     var headerRow = new Row(overallRowCounter++, cells);
@@ -414,12 +427,21 @@ namespace FastExcel
 
                 var styleIndex = StandardStyleID;
 
-                item.Elements().ToList().ForEach(k =>
+                for (var i = 0; i < item.Elements().Count(); i++)
                 {
-                    var v = k.Value;
+                    var v = item.Elements().ElementAt(i).Value;
 
-                    dataCells.Add(new Cell(dataCellCounter++, v?.ToString().Replace(",", " ").Replace("\r\n", " ").Replace("\n", " ") ?? "", styleIndex));
-                });
+                    var h = ColumnHeadings.Count > i ? ColumnHeadings[i] : null;
+
+                    dataCells.Add(new Cell(dataCellCounter++, v?.ToString().Replace(",", " ").Replace("\r\n", " ").Replace("\n", " ") ?? "", styleIndex, h));
+                }
+
+                //item.Elements().ToList().ForEach(k =>
+                //{
+                //    var v = k.Value;
+
+                //    dataCells.Add(new Cell(dataCellCounter++, v?.ToString().Replace(",", " ").Replace("\r\n", " ").Replace("\n", " ") ?? "", styleIndex));
+                //});
 
                 var dataRow = new Row(overallRowCounter++, dataCells);
 

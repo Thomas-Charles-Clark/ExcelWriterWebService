@@ -1,8 +1,11 @@
-﻿using System;
+﻿using Microsoft.Ajax.Utilities;
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Web.Http.ValueProviders;
 using System.Xml.Linq;
 
 namespace FastExcel
@@ -62,11 +65,16 @@ namespace FastExcel
         public int RowNumber { get; }
 
         /// <summary>
+        /// Number of the row this cell is on
+        /// </summary>
+        public string ColumnHeading { get; }
+
+        /// <summary>
         /// Create a new Cell
         /// </summary>
         /// <param name="columnNumber">Column number starting at 1</param>
         /// <param name="value">Cell Value</param>
-        public Cell(int columnNumber, object value, int? styleIndex = null)
+        public Cell(int columnNumber, object value, int? styleIndex = null, string columnHeading = null)
         {
             if (columnNumber <= 0)
             {
@@ -77,6 +85,7 @@ namespace FastExcel
             RowNumber = 0;
             Value = value;
             StyleIndex = styleIndex;
+            ColumnHeading = columnHeading;
         }
 
         /// <summary>
@@ -84,7 +93,7 @@ namespace FastExcel
         /// </summary>
         /// <param name="cellElement">Cell</param>
         /// <param name="worksheet">The worksheet that this cell is on</param>
-        public Cell(XElement cellElement, Worksheet worksheet, int? styleIndex = null)
+        public Cell(XElement cellElement, Worksheet worksheet, int? styleIndex = null, string columnHeading = null)
         {
             bool isTextRow = (from a in cellElement.Attributes("t")
                               where a.Value == "s"
@@ -105,6 +114,8 @@ namespace FastExcel
             XElement = cellElement;
 
             StyleIndex = styleIndex;
+
+            ColumnHeading = columnHeading;
 
             if (isTextRow)
             {
@@ -134,39 +145,85 @@ namespace FastExcel
 
             if (Value != null)
             {
-                bool isString = false;
+                var cellType = "s";
+
                 object value = Value;
 
-                if (Value is int)
+                string stringedValue = $"{value}";
+
+                //if (ColumnHeading?.ToLowerInvariant().Contains("reference") == false)
+                //{
+                if (ColumnHeading?.ToLowerInvariant().Contains("code") == true ||
+                    ColumnHeading?.ToLowerInvariant().Contains("reference") == true ||
+                    ColumnHeading?.EndsWith("ID") == true)
                 {
-                    isString = false;
+                    cellType = "s";
+
+                    if (ColumnHeading == "ImageID")
+                    {
+                        cellType = "i";
+                    }
                 }
-                else if (Value is double)
+                else
                 {
-                    isString = false;
-                }
-                else if (Value is string)
-                {
-                    isString = true;
+                    if (Byte.TryParse(stringedValue, out _) ||
+                        Int16.TryParse(stringedValue, out _) ||
+                        Int32.TryParse(stringedValue, out _) ||
+                        Int64.TryParse(stringedValue, out _))
+                    {
+                        cellType = "n";
+                        StyleIndex = 41;
+                    }
+
+                    if (stringedValue.Contains(".") || ColumnHeading?.Contains("Currency") == true || ColumnHeading?.Contains("Sterling") == true)
+                    {
+                        if (Decimal.TryParse(stringedValue, out _))
+                        {
+                            cellType = "n";
+                            StyleIndex = 39;
+                        }
+                    }
+                    
+                    if (DateTime.TryParseExact(stringedValue, "yyyy-MM-dd", System.Globalization.DateTimeFormatInfo.InvariantInfo, System.Globalization.DateTimeStyles.None, out DateTime dt))
+                    {
+                        //value = dt.ToString("dd/MM/yyyy");
+                        //cellType = "d";
+                        StyleIndex = 40;
+                    }
                 }
 
-                if (isString)
+                if (cellType == "s")
                 {
                     value = sharedStrings.AddString(value.ToString());
                 }
 
                 if (StyleIndex.HasValue)
                 {
-                    cell.Append($"<c s=\"{StyleIndex.Value}\" r=\"{GetExcelColumnName(ColumnNumber)}{rowNumber}\"{(isString ? " t=\"s\"" : string.Empty)}>");
+                    if (cellType == "s")
+                    {
+                        cell.Append($"<c s=\"{StyleIndex.Value}\" r=\"{GetExcelColumnName(ColumnNumber)}{rowNumber}\" t=\"{cellType}\">");
+                    }
+                    else
+                    {
+                        cell.Append($"<c s=\"{StyleIndex.Value}\" r=\"{GetExcelColumnName(ColumnNumber)}{rowNumber}\">");
+                    }
                 }
                 else
                 {
-                    cell.Append($"<c r=\"{GetExcelColumnName(ColumnNumber)}{rowNumber}\"{(isString ? " t=\"s\"" : string.Empty)}>");
+                    if (cellType != "n")
+                    {
+                        cell.Append($"<c r=\"{GetExcelColumnName(ColumnNumber)}{rowNumber}\" t=\"{cellType}\">");
+                    }
+                    else
+                    {
+                        cell.Append($"<c r=\"{GetExcelColumnName(ColumnNumber)}{rowNumber}\">");
+                    }
                 }
-
+               
                 cell.AppendFormat("<v>{0}</v>", value);
 
                 cell.Append("</c>");
+
             }
 
             return cell;
