@@ -65,6 +65,37 @@ namespace ExcelWriterWebService.Controllers
                 new MediaTypeHeaderValue("application/octet-stream");
 
             return result;
-        }
-    }
+		}
+
+		[Route("api/excel/CreateFromJsonFile")]
+		[HttpPost]
+		public IHttpActionResult CreateFromJsonFile([FromBody] PassExcelCreationFromJsonFile objCreation)
+		{
+			try
+			{
+				if (Framework.WriteFile(
+							FileName: objCreation.FileName,
+							FileType: objCreation.FileType,
+							Destination: objCreation.Destination,
+							Contents: System.IO.File.ReadAllText(objCreation.OriginFilePath),
+							UppercaseHeadings: objCreation.UppercaseHeadings,
+							AutoSizeColumns: objCreation.AutoSizeColumns,
+							HeadingStyleID: objCreation.HeadingStyleID,
+							StandardStyleID: objCreation.StandardStyleID,
+							IndentedHeadingStyleID: objCreation.IndentedHeadingStyleID,
+							IndentedStyleID: objCreation.IndentedStyleID))
+				{
+					return Ok(new { objCreation.FileName });
+				}
+				else
+				{
+					throw new Exception($"FAILED writing {objCreation.FileName}");
+				}
+			}
+			catch (Exception e)
+			{
+				return Content(HttpStatusCode.InternalServerError, e);
+			}
+		}
+	}
 }
