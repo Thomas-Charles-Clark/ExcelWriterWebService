@@ -19,7 +19,7 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Text;
 
-
+ 
 // Thanks, Google.
 public partial class ExcelStreamingAPIController : ApiController
 {
@@ -29,6 +29,11 @@ public partial class ExcelStreamingAPIController : ApiController
 	[Route("api/excel-streaming/StreamJsonToXlsx")]
 	public async Task<IHttpActionResult> StreamJsonToXlsx()
 	{
+
+#if DEBUG
+		System.Diagnostics.Debug.WriteLine("api/excel-streaming/StreamJsonToXlsx hit");
+#endif
+
 		// 1. Enforce multipart request type
 		if (!Request.Content.IsMimeMultipartContent())
 		{
@@ -109,16 +114,34 @@ public partial class ExcelStreamingAPIController : ApiController
 							var rowAttributes = new[] { new OpenXmlAttribute("r", null, rowIndex.ToString()) };
 							xmlWriter.WriteStartElement(new Row(), rowAttributes);
 						}
-						else if (insideObject && IsValueToken(jsonReader.TokenType))
+
+						if (rowIndex == 1)
 						{
-							colIndex++;
-							WriteInferredCell(xmlWriter, jsonReader.Value, jsonReader.TokenType, (uint)colIndex, rowIndex);
+							if (insideObject && IsPropertyNameToken(jsonReader.TokenType))
+							{
+								colIndex++;
+								WriteInferredCell(xmlWriter, jsonReader.Value, jsonReader.TokenType, (uint)colIndex, rowIndex);
+							}
+							else if (jsonReader.TokenType == JsonToken.EndObject)
+							{
+								xmlWriter.WriteEndElement(); // Close Row
+								rowIndex++;
+								insideObject = false;
+							}
 						}
-						else if (jsonReader.TokenType == JsonToken.EndObject)
+						else
 						{
-							xmlWriter.WriteEndElement(); // Close Row
-							rowIndex++;
-							insideObject = false;
+							if (insideObject && IsValueToken(jsonReader.TokenType))
+							{
+								colIndex++;
+								WriteInferredCell(xmlWriter, jsonReader.Value, jsonReader.TokenType, (uint)colIndex, rowIndex);
+							}
+							else if (jsonReader.TokenType == JsonToken.EndObject)
+							{
+								xmlWriter.WriteEndElement(); // Close Row
+								rowIndex++;
+								insideObject = false;
+							}
 						}
 					}
 				}
@@ -137,6 +160,11 @@ public partial class ExcelStreamingAPIController : ApiController
 			sheets.Append(sheet);
 			workbookPart.Workbook.Save();
 		}
+	}
+
+	private bool IsPropertyNameToken(JsonToken tokenType)
+	{
+		return tokenType == JsonToken.PropertyName;
 	}
 
 	private bool IsValueToken(JsonToken tokenType)
