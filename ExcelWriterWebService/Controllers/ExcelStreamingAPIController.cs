@@ -18,8 +18,16 @@ using System.Xml;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Text;
+using System.Runtime.CompilerServices;
 
- 
+
+using LargeXlsx;
+using System.ComponentModel;
+using DocumentFormat.OpenXml.Wordprocessing;
+using ExcelWriterWebService.Models;
+using System.Web;
+
+
 // Thanks, Google.
 public partial class ExcelStreamingAPIController : ApiController
 {
@@ -29,220 +37,170 @@ public partial class ExcelStreamingAPIController : ApiController
 	[Route("api/excel-streaming/StreamJsonToXlsx")]
 	public async Task<IHttpActionResult> StreamJsonToXlsx()
 	{
-
 #if DEBUG
 		System.Diagnostics.Debug.WriteLine("api/excel-streaming/StreamJsonToXlsx hit");
 #endif
 
-		// 1. Enforce multipart request type
-		if (!Request.Content.IsMimeMultipartContent())
-		{
-			return StatusCode(HttpStatusCode.UnsupportedMediaType);
-		}
-
-		// Extract custom header safely
-		IEnumerable<string> headerValues;
-		if (!Request.Headers.TryGetValues("DestinationFullFilePath", out headerValues))
+		// 1. Extract custom destination file path header safely
+		if (!Request.Headers.TryGetValues("DestinationFullFilePath", out var headerValues))
 		{
 			return BadRequest("Missing 'DestinationFullFilePath' header.");
 		}
 		var destinationFullFilePath = headerValues.FirstOrDefault();
 
-		if (!System.IO.Directory.Exists(System.IO.Path.GetDirectoryName(destinationFullFilePath)))
+		if (string.IsNullOrWhiteSpace(destinationFullFilePath))
 		{
-			System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(destinationFullFilePath));
+			return BadRequest("Invalid 'DestinationFullFilePath' value.");
 		}
 
-		// 2. Read the multipart contents as a true stream without full buffering
-		var streamProvider = await Request.Content.ReadAsMultipartAsync();
-
-		// Find the file content block without downloading it to memory first
-		var jsonContent = streamProvider.Contents.FirstOrDefault(c => !string.IsNullOrEmpty(c.Headers.ContentDisposition.FileName));
-
-		if (jsonContent == null)
+		// 2. Ensure destination directory exists
+		var directory = Path.GetDirectoryName(destinationFullFilePath);
+		if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
 		{
-			return BadRequest("Missing streamed JSON object.");
+			Directory.CreateDirectory(directory);
 		}
 
-		// 3. Open the incoming HTTP network stream and the target disk stream
-		// Using true async I/O handles high-throughput operations smoothly
-		using (Stream incomingJsonStream = await jsonContent.ReadAsStreamAsync())
-		using (FileStream diskTargetStream = new FileStream(destinationFullFilePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 4096, useAsync: true))
+		try
 		{
-			// Execute the processing. The JSON tokens flow straight from the network card 
-			// through OpenXmlWriter and directly onto your hard drive. 
-			GenerateExcelToDiskPath(incomingJsonStream, diskTargetStream);
+			// 3. Open the incoming raw HTTP body stream directly (No more multipart temp files!)
+			using (Stream rawHttpStream = await Request.Content.ReadAsStreamAsync())
+			// 4. Open the target Excel file stream
+			using (FileStream diskTargetStream = new FileStream(destinationFullFilePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 32768, useAsync: true))  // 128kb buffer; IO on the Files server is costly
+			using (var writer = new XlsxWriter(diskTargetStream))
+			{	
+				writer.BeginWorksheet("Data Export");
+
+				// Force the StreamReader to explicitly pair bytes as 2-byte UTF-16LE units
+				var utf16LeNoBom = new UnicodeEncoding(bigEndian: false, byteOrderMark: false, throwOnInvalidBytes: false);
+
+				// 2. FORCE a managed byte buffer layer (e.g., 64KB) to absorb network boundary clipping safely
+				using (Stream incomingJsonStreamBuffer = new BufferedStream(rawHttpStream, 32768))
+				// 3. Initialize the readers on top of the safely padded stream
+				using (var streamReader = new StreamReader(incomingJsonStreamBuffer, utf16LeNoBom))
+				using (var jsonReader = new JsonTextReader(streamReader))
+				{
+					bool isFirstObject = true;
+					var currentObjectValues = new List<object>();
+
+					while (await jsonReader.ReadAsync())
+					{
+						if (jsonReader.TokenType == JsonToken.StartObject)
+						{
+							currentObjectValues.Clear();
+						}
+
+						// Pass 1: Write out structural Excel headers (Only during the very first record)
+						if (isFirstObject && jsonReader.TokenType == JsonToken.PropertyName)
+						{
+							string propName = jsonReader.Value?.ToString() ?? "";
+
+							if (currentObjectValues.Count == 0)
+							{
+								writer.BeginRow(); // Initialize Header Row
+							}
+
+							writer.Write(propName);
+						}
+
+						// Buffer primitive values for the current processing record row
+						if (jsonReader.TokenType == JsonToken.String ||
+							jsonReader.TokenType == JsonToken.Integer ||
+							jsonReader.TokenType == JsonToken.Float ||
+							jsonReader.TokenType == JsonToken.Boolean ||
+							jsonReader.TokenType == JsonToken.Date||
+							jsonReader.TokenType == JsonToken.Bytes ||
+							jsonReader.TokenType == JsonToken.Null)
+						{
+							currentObjectValues.Add(jsonReader.Value);
+						}
+
+						if (jsonReader.TokenType == JsonToken.EndObject)
+						{
+							writer.BeginRow(); // Open a clean row block for data values
+
+							foreach (var val in currentObjectValues)
+							{
+								// 1. Handle Nulls cleanly first
+								if (val == null)
+								{
+									writer.Write("");
+								}
+								// 2. Exact matches for exact overloads (No casting overhead or precision loss)
+								else if (val is int intVal)
+								{
+									writer.Write(intVal);
+								}
+								else if (val is decimal decimalVal)
+								{
+									writer.Write(decimalVal); // Preserves exact currency/financial values
+								}
+								else if (val is double doubleVal)
+								{
+									writer.Write(doubleVal);
+								}
+								else if (val is bool booleanVal)
+								{
+									writer.Write(booleanVal);
+								}
+								else if (val is DateTime dateTimeVal)
+								{
+									writer.Write(dateTimeVal); // Leverages native Util.DateToDouble conversion!
+								}
+								// 3. Smart Widening Casts for unrepresented C# integer types
+								else if (val is long || val is short || val is byte)
+								{
+									// Json.NET will sometimes map small ints to int, large to long.
+									// If it hits a true long, Excel can safely store it as a decimal or double.
+									writer.Write(Convert.ToDecimal(val));
+								}
+								else if (val is float floatVal)
+								{
+									writer.Write(Convert.ToDouble(floatVal));
+								}
+								// 4. Fallback for strings or any other unhandled type
+								else
+								{
+									writer.Write(val.ToString());
+								}
+							}
+
+							isFirstObject = false;
+						}
+					}
+				}
+			}
+		}
+		catch (Exception exception)
+		{
+			// Handle network drops or parsing issues gracefully
+
+			// Log your exception here
+			var db = new DatabaseContext();
+
+			db.SaveToErrorLog(
+				memberId: 0,
+				exceptionType: exception.GetType().ToString(),
+				exceptionMessage: exception.Message,
+				exceptionSource: exception.Source,
+				stackTrace: exception.StackTrace,
+				innerExceptionType: exception.InnerException?.GetType().ToString(),
+				innerExceptionMessage: exception.InnerException?.Message,
+				innerExceptionSource: exception.InnerException?.Source,
+				innerExceptionStackTrace: exception.InnerException?.StackTrace,
+				HttpContext.Current.Request.Url.AbsoluteUri,
+				HttpContext.Current.Request.UserAgent,
+				HttpContext.Current.Request.UserHostAddress,
+				DateTime.Now
+			);
+
+			return InternalServerError(exception);
 		}
 
-		// 4. Send success metadata packet downstream
 		return Ok(new
 		{
 			Message = "File successfully generated and saved to files server.",
 			FileName = Path.GetFileName(destinationFullFilePath),
 			SavedPath = destinationFullFilePath
 		});
-	}
-
-	private void GenerateExcelToDiskPath(Stream jsonInputStream, Stream fileDiskStream)
-	{
-		// SpreadsheetDocument processes elements directly into the FileStream channel
-		using (var spreadsheetDocument = SpreadsheetDocument.Create(fileDiskStream, SpreadsheetDocumentType.Workbook))
-		{
-			var workbookPart = spreadsheetDocument.AddWorkbookPart();
-			workbookPart.Workbook = new Workbook();
-			var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
-
-			using (var xmlWriter = OpenXmlWriter.Create(worksheetPart, Encoding.UTF8))
-			{
-				xmlWriter.WriteStartElement(new Worksheet());
-				xmlWriter.WriteStartElement(new SheetData());
-
-				using (var streamReader = new StreamReader(jsonInputStream))
-				using (var jsonReader = new JsonTextReader(streamReader))
-				{
-					uint rowIndex = 1;
-					int colIndex = 0;
-					bool insideObject = false;
-
-					while (jsonReader.Read())
-					{
-						if (jsonReader.TokenType == JsonToken.StartObject)
-						{
-							insideObject = true;
-							colIndex = 0;
-
-							var rowAttributes = new[] { new OpenXmlAttribute("r", null, rowIndex.ToString()) };
-							xmlWriter.WriteStartElement(new Row(), rowAttributes);
-						}
-
-						if (rowIndex == 1)
-						{
-							if (insideObject && IsPropertyNameToken(jsonReader.TokenType))
-							{
-								colIndex++;
-								WriteInferredCell(xmlWriter, jsonReader.Value, jsonReader.TokenType, (uint)colIndex, rowIndex);
-							}
-							else if (jsonReader.TokenType == JsonToken.EndObject)
-							{
-								xmlWriter.WriteEndElement(); // Close Row
-								rowIndex++;
-								insideObject = false;
-							}
-						}
-						else
-						{
-							if (insideObject && IsValueToken(jsonReader.TokenType))
-							{
-								colIndex++;
-								WriteInferredCell(xmlWriter, jsonReader.Value, jsonReader.TokenType, (uint)colIndex, rowIndex);
-							}
-							else if (jsonReader.TokenType == JsonToken.EndObject)
-							{
-								xmlWriter.WriteEndElement(); // Close Row
-								rowIndex++;
-								insideObject = false;
-							}
-						}
-					}
-				}
-
-				xmlWriter.WriteEndElement(); // Close SheetData
-				xmlWriter.WriteEndElement(); // Close Worksheet
-			}
-
-			var sheets = spreadsheetDocument.WorkbookPart.Workbook.AppendChild(new Sheets());
-			var sheet = new Sheet()
-			{
-				Id = spreadsheetDocument.WorkbookPart.GetIdOfPart(worksheetPart),
-				SheetId = 1,
-				Name = "Data Export"
-			};
-			sheets.Append(sheet);
-			workbookPart.Workbook.Save();
-		}
-	}
-
-	private bool IsPropertyNameToken(JsonToken tokenType)
-	{
-		return tokenType == JsonToken.PropertyName;
-	}
-
-	private bool IsValueToken(JsonToken tokenType)
-	{
-		return tokenType == JsonToken.String ||
-			   tokenType == JsonToken.Integer ||
-			   tokenType == JsonToken.Float ||
-			   tokenType == JsonToken.Boolean ||
-			   tokenType == JsonToken.Null;
-	}
-
-	private void WriteInferredCell(OpenXmlWriter writer, object value, JsonToken tokenType, uint colIndex, uint rowIndex)
-	{
-		string cellReference = GetCellReference((int)colIndex, rowIndex);
-
-		if (value == null || tokenType == JsonToken.Null)
-		{
-			var cellAttributes = new[] { new OpenXmlAttribute("r", null, cellReference) };
-			writer.WriteStartElement(new Cell(), cellAttributes);
-			writer.WriteEndElement();
-			return;
-		}
-
-		string typeAttr = "str";
-		string stringValue = value.ToString();
-
-		switch (tokenType)
-		{
-			case JsonToken.Integer:
-			case JsonToken.Float:
-				typeAttr = "n";
-				stringValue = Convert.ToString(value);
-				break;
-
-			case JsonToken.Boolean:
-				typeAttr = "b";
-				stringValue = (bool)value ? "1" : "0";
-				break;
-
-			case JsonToken.String:
-			default:
-				typeAttr = "str";
-				break;
-		}
-
-		var attributes = new[] {
-			new OpenXmlAttribute("r", null, cellReference),
-			new OpenXmlAttribute("t", null, typeAttr)
-		};
-
-		writer.WriteStartElement(new Cell(), attributes);
-
-		// Keeps only valid XML 1.0 characters
-		string cleanValue = Regex.Replace(stringValue, @"[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u0084\u0086-\u009F\uFFFE\uFFFF]", "");
-
-		writer.WriteElement(new CellValue(cleanValue));
-		writer.WriteEndElement();
-	}
-
-	static string RemoveInvalidXmlChars(string text)
-	{
-		var validXmlChars = text.Where(ch => XmlConvert.IsXmlChar(ch)).ToArray();
-		return new string(validXmlChars);
-	}
-
-	private string GetCellReference(int columnIndex, uint rowIndex)
-	{
-		int dividend = columnIndex;
-		string columnName = String.Empty;
-		int modifier;
-
-		while (dividend > 0)
-		{
-			modifier = (dividend - 1) % 26;
-			columnName = Convert.ToChar(65 + modifier).ToString() + columnName;
-			dividend = (dividend - modifier) / 26;
-		}
-
-		return $"{columnName}{rowIndex}";
 	}
 }

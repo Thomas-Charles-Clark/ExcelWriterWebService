@@ -1,4 +1,6 @@
-﻿using System.Web;
+﻿using ExcelWriterWebService.Utilities;
+
+using System.Web;
 using System.Web.Mvc;
 
 namespace ExcelWriterWebService
@@ -7,7 +9,7 @@ namespace ExcelWriterWebService
     {
         public static void RegisterGlobalFilters(GlobalFilterCollection filters)
         {
-            filters.Add(new HandleErrorAttribute());
+            //filters.Add(new HandleErrorAttribute());
         }
     }
 }

@@ -1,7 +1,10 @@
-﻿using System;
+﻿using ExcelWriterWebService.Utilities;
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Web.Http;
+using System.Web.Http.ExceptionHandling;
 
 namespace ExcelWriterWebService
 {
@@ -19,6 +22,9 @@ namespace ExcelWriterWebService
                 routeTemplate: "api/{controller}/{id}",
                 defaults: new { id = RouteParameter.Optional }
             );
-        }
+
+			// REPLACE the default Web API IExceptionHandler with yours
+			config.Services.Replace(typeof(IExceptionHandler), new GlobalExceptionHandler());
+		}
     }
 }
